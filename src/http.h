@@ -32,6 +32,14 @@ enum http_response_status {
     HTTP_SERVICE_UNAVAILABLE = 503
 };
 
+// Range struct
+struct range_request {
+    long start;
+    long end;
+    bool is_set;
+};
+
+
 struct http_transaction {
     /* request related fields */
     enum http_method req_method;
@@ -47,6 +55,8 @@ struct http_transaction {
     buffer_t resp_body;
 
     struct http_client *client;
+
+    struct range_request range;
 };
 
 struct http_client {

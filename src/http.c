@@ -20,12 +20,13 @@
 #include <fcntl.h>
 #include <assert.h>
 #include <linux/limits.h>
-
 #include "http.h"
 #include "hexdump.h"
 #include "socket.h"
 #include "bufio.h"
 #include "main.h"
+#include <dirent.h>
+#include <jansson.h>
 
 // Need macros here because of the sizeof
 #define CRLF "\r\n"
@@ -39,11 +40,11 @@ http_parse_request(struct http_transaction *ta)
 {
     size_t req_offset;
     ssize_t len = bufio_readline(ta->client->bufio, &req_offset);
-    if (len < 2)       // error, EOF, or less than 2 characters
+    if (len < 2) // error, EOF, or less than 2 characters
         return false;
 
     char *request = bufio_offset2ptr(ta->client->bufio, req_offset);
-    request[len-2] = '\0';  // replace LF with 0 to ensure zero-termination
+    request[len - 2] = '\0'; // replace LF with 0 to ensure zero-termination
     char *endptr;
     char *method = strtok_r(request, " ", &endptr);
     if (method == NULL)
@@ -63,7 +64,7 @@ http_parse_request(struct http_transaction *ta)
     ta->req_path = bufio_ptr2offset(ta->client->bufio, req_path);
 
     char *http_version = strtok_r(NULL, CR, &endptr);
-    if (http_version == NULL)  // would be HTTP 0.9
+    if (http_version == NULL) // would be HTTP 0.9
         return false;
 
     // record client's HTTP version in request
@@ -81,20 +82,21 @@ http_parse_request(struct http_transaction *ta)
 static bool
 http_process_headers(struct http_transaction *ta)
 {
-    for (;;) {
+    for (;;)
+    {
         size_t header_offset;
         ssize_t len = bufio_readline(ta->client->bufio, &header_offset);
         if (len <= 0)
             return false;
 
         char *header = bufio_offset2ptr(ta->client->bufio, header_offset);
-        if (len == 2 && STARTS_WITH(header, CRLF))       // empty CRLF
+        if (len == 2 && STARTS_WITH(header, CRLF)) // empty CRLF
             return true;
 
-        header[len-2] = '\0';
-        /* Each header field consists of a name followed by a 
-         * colon (":") and the field value. Field names are 
-         * case-insensitive. The field value MAY be preceded by 
+        header[len - 2] = '\0';
+        /* Each header field consists of a name followed by a
+         * colon (":") and the field value. Field names are
+         * case-insensitive. The field value MAY be preceded by
          * any amount of LWS, though a single SP is preferred.
          */
         char *endptr;
@@ -109,21 +111,47 @@ http_process_headers(struct http_transaction *ta)
 
         // you may print the header like so
         // printf("Header: %s: %s\n", field_name, field_value);
-        if (!strcasecmp(field_name, "Content-Length")) {
+        if (!strcasecmp(field_name, "Content-Length"))
+        {
             ta->req_content_len = atoi(field_value);
         }
 
         /* Handle other headers here. Both field_value and field_name
          * are zero-terminated strings.
          */
+        // video test 4
+        if (!strcasecmp(field_name, "Range"))
+        {
+            int start;
+            int end;
+            int result = sscanf(field_value, "bytes=%d-%d", &start, &end);
+
+            // Both start and end are present
+            if (result == 2)
+            {
+                ta->range.start = start;
+                ta->range.end = end;
+                ta->range.is_set = true;
+            }
+            // Only start is present
+            else if (result == 1)
+            {
+                ta->range.start = start;
+                ta->range.end = -1;
+                ta->range.is_set = true;
+            }
+            else
+            {
+                ta->range.is_set = false;
+            }
+        }
     }
 }
 
 const int MAX_HEADER_LEN = 2048;
 
 /* add a formatted header to the response buffer. */
-void 
-http_add_header(buffer_t * resp, char* key, char* fmt, ...)
+void http_add_header(buffer_t *resp, char *key, char *fmt, ...)
 {
     va_list ap;
 
@@ -146,10 +174,10 @@ add_content_length(buffer_t *res, size_t len)
     http_add_header(res, "Content-Length", "%ld", len);
 }
 
-/* start the response by writing the first line of the response 
+/* start the response by writing the first line of the response
  * to the response buffer.  Used in send_response_header */
 static void
-start_response(struct http_transaction * ta, buffer_t *res)
+start_response(struct http_transaction *ta, buffer_t *res)
 {
     buffer_init(res, 80);
 
@@ -159,7 +187,8 @@ start_response(struct http_transaction * ta, buffer_t *res)
      */
     buffer_appends(res, "HTTP/1.0 ");
 
-    switch (ta->resp_status) {
+    switch (ta->resp_status)
+    {
     case HTTP_OK:
         buffer_appends(res, "200 OK");
         break;
@@ -193,9 +222,9 @@ start_response(struct http_transaction * ta, buffer_t *res)
     case HTTP_INTERNAL_ERROR:
         buffer_appends(res, "500 Internal Server Error");
         break;
-    default:  /* else */
+    default: /* else */
         buffer_appends(res, "500 This is not a valid status code."
-                "Did you forget to set resp_status?");
+                            "Did you forget to set resp_status?");
         break;
     }
     buffer_appends(res, CRLF);
@@ -210,8 +239,7 @@ send_response_header(struct http_transaction *ta)
     buffer_appends(&ta->resp_headers, CRLF);
 
     buffer_t *response_and_headers[2] = {
-        &response, &ta->resp_headers
-    };
+        &response, &ta->resp_headers};
 
     int rc = bufio_sendbuffers(ta->client->bufio, response_and_headers, 2);
     buffer_delete(&response);
@@ -230,8 +258,7 @@ send_response(struct http_transaction *ta)
     start_response(ta, &response);
 
     buffer_t *response_and_headers[3] = {
-        &response, &ta->resp_headers, &ta->resp_body
-    };
+        &response, &ta->resp_headers, &ta->resp_body};
 
     int rc = bufio_sendbuffers(ta->client->bufio, response_and_headers, 3);
     buffer_delete(&response);
@@ -242,7 +269,7 @@ const int MAX_ERROR_LEN = 2048;
 
 /* Send an error response. */
 static bool
-send_error(struct http_transaction * ta, enum http_response_status status, const char *fmt, ...)
+send_error(struct http_transaction *ta, enum http_response_status status, const char *fmt, ...)
 {
     va_list ap;
 
@@ -260,11 +287,11 @@ send_error(struct http_transaction * ta, enum http_response_status status, const
 static bool
 send_not_found(struct http_transaction *ta)
 {
-    return send_error(ta, HTTP_NOT_FOUND, "File %s not found", 
-        bufio_offset2ptr(ta->client->bufio, ta->req_path));
+    return send_error(ta, HTTP_NOT_FOUND, "File %s not found",
+                      bufio_offset2ptr(ta->client->bufio, ta->req_path));
 }
 
-/* A start at assigning an appropriate mime type.  Real-world 
+/* A start at assigning an appropriate mime type.  Real-world
  * servers use more extensive lists such as /etc/mime.types
  */
 static const char *
@@ -291,6 +318,17 @@ guess_mime_type(char *filename)
 
     /* hint: you need to add support for (at least) .css, .svg, and .mp4
      * You can grep /etc/mime.types for the correct types */
+
+    if (!strcasecmp(suffix, ".css"))
+        return "text/css";
+
+    if (!strcasecmp(suffix, ".svg"))
+        return "image/svg+xml";
+
+    // video test 3/4
+    if (!strcasecmp(suffix, ".mp4"))
+        return "video/mp4";
+
     return "text/plain";
 }
 
@@ -300,13 +338,13 @@ handle_static_asset(struct http_transaction *ta, char *basedir)
 {
     char fname[PATH_MAX];
 
-    assert (basedir != NULL || !!!"No base directory. Did you specify -R?");
+    assert(basedir != NULL || !!!"No base directory. Did you specify -R?");
     char *req_path = bufio_offset2ptr(ta->client->bufio, ta->req_path);
     // The code below is vulnerable to an attack.  Can you see
     // which?  Fix it to avoid indirect object reference (IDOR) attacks.
     snprintf(fname, sizeof fname, "%s%s", basedir, req_path);
-
-    if (access(fname, R_OK) == -1) {
+    if (access(fname, R_OK) == -1)
+    {
         if (errno == EACCES)
             return send_error(ta, HTTP_PERMISSION_DENIED, "Permission denied.");
         else
@@ -317,19 +355,32 @@ handle_static_asset(struct http_transaction *ta, char *basedir)
     struct stat st;
     int rc = stat(fname, &st);
     /* Remove this line once your code handles this case */
-    assert (!(html5_fallback && rc == 0 && S_ISDIR(st.st_mode)));
+    assert(!(html5_fallback && rc == 0 && S_ISDIR(st.st_mode)));
 
     if (rc == -1)
         return send_error(ta, HTTP_INTERNAL_ERROR, "Could not stat file.");
 
     int filefd = open(fname, O_RDONLY);
-    if (filefd == -1) {
+    if (filefd == -1)
+    {
         return send_not_found(ta);
     }
 
     ta->resp_status = HTTP_OK;
     http_add_header(&ta->resp_headers, "Content-Type", "%s", guess_mime_type(fname));
+    // video test 1/3/4
+    http_add_header(&ta->resp_headers, "Accept-Ranges", "bytes");
     off_t from = 0, to = st.st_size - 1;
+    if (ta->range.is_set)
+    {
+        ta->resp_status = HTTP_PARTIAL_CONTENT;
+        from = ta->range.start;
+        if (ta->range.end > 0)
+        {
+            to = ta->range.end;
+        }
+        http_add_header(&ta->resp_headers, "Content-Range", "bytes %ld-%ld/%ld", from, to, st.st_size);
+    }
 
     off_t content_length = to + 1 - from;
     add_content_length(&ta->resp_headers, content_length);
@@ -360,19 +411,68 @@ handle_api(struct http_transaction *ta)
             return send_response(ta);
         }
     }
+    // video test 2
+    else if (strcmp(req_path, "/api/video") == 0)
+    {
+        if (ta->req_method == HTTP_GET)
+        {
+            ta->resp_status = HTTP_OK;
+
+            /*
+            OPENDIR(3)                 Linux Programmer's Manual                OPENDIR(3)
+
+            NAME
+                                        opendir, fdopendir - open a directory
+
+            SYNOPSIS
+                                        #include <sys/types.h>
+                                        #include <dirent.h>
+
+                                        DIR *opendir(const char *name);
+                                        DIR *fdopendir(int fd);
+            */
+            DIR *dir = opendir(server_root);
+            struct dirent *file;
+            json_t *arr = json_array();
+
+            for (file = readdir(dir); file != NULL; file = readdir(dir))
+            {
+                json_t *json = json_object();
+                char fname[PATH_MAX];
+                snprintf(fname, sizeof fname, "%s/%s", server_root, file->d_name);
+
+                // Determine file size
+                struct stat st;
+                int rc = stat(fname, &st);
+                if (rc == -1)
+                {
+                    return send_error(ta, HTTP_INTERNAL_ERROR, "Could not stat file.");
+                }
+                else
+                {
+                    json_object_set_new(json, "size", json_integer(st.st_size));
+                    json_object_set_new(json, "name", json_string(file->d_name));
+                    json_array_append_new(arr, json);
+                }
+            }
+            closedir(dir);
+            buffer_appends(&ta->resp_body, json_dumps(arr, JSON_COMPACT));
+            http_add_header(&ta->resp_headers, "Content-Type", "application/json");
+            return send_response(ta);
+        }
+    }
+
     return send_error(ta, HTTP_NOT_FOUND, "API not implemented");
 }
 
 /* Set up an http client, associating it with a bufio buffer. */
-void 
-http_setup_client(struct http_client *self, struct bufio *bufio)
+void http_setup_client(struct http_client *self, struct bufio *bufio)
 {
     self->bufio = bufio;
 }
 
 /* Handle a single HTTP transaction.  Returns true on success. */
-bool
-http_handle_transaction(struct http_client *self)
+bool http_handle_transaction(struct http_client *self)
 {
     struct http_transaction ta;
     memset(&ta, 0, sizeof ta);
@@ -384,7 +484,8 @@ http_handle_transaction(struct http_client *self)
     if (!http_process_headers(&ta))
         return false;
 
-    if (ta.req_content_len > 0) {
+    if (ta.req_content_len > 0)
+    {
         int rc = bufio_read(self->bufio, ta.req_content_len, &ta.req_body);
         if (rc != ta.req_content_len)
             return false;
@@ -400,12 +501,16 @@ http_handle_transaction(struct http_client *self)
 
     bool rc = false;
     char *req_path = bufio_offset2ptr(ta.client->bufio, ta.req_path);
-    if (STARTS_WITH(req_path, "/api")) {
+    if (STARTS_WITH(req_path, "/api"))
+    {
         rc = handle_api(&ta);
-    } else
-    if (STARTS_WITH(req_path, "/private")) {
+    }
+    else if (STARTS_WITH(req_path, "/private"))
+    {
         /* not implemented */
-    } else {
+    }
+    else
+    {
         rc = handle_static_asset(&ta, server_root);
     }
 
