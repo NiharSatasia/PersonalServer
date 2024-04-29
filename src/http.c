@@ -355,7 +355,7 @@ handle_static_asset(struct http_transaction *ta, char *basedir)
     struct stat st;
     int rc = stat(fname, &st);
     /* Remove this line once your code handles this case */
-    assert(!(html5_fallback && rc == 0 && S_ISDIR(st.st_mode)));
+    // assert(!(html5_fallback && rc == 0 && S_ISDIR(st.st_mode)));
 
     if (rc == -1)
         return send_error(ta, HTTP_INTERNAL_ERROR, "Could not stat file.");
@@ -398,6 +398,26 @@ out:
     return success;
 }
 
+// Helper function to generate a jwt
+static char *generate_jwt(const char *username)
+{
+    jwt_t *jwt = NULL;
+    const char *secret = getenv("SECRET");
+    time_t now = time(NULL);
+    int exp = now + token_expiration_time;
+
+    jwt_new(&jwt);
+    jwt_add_grant(jwt, "sub", username);
+    jwt_add_grant_int(jwt, "iat", now);
+    jwt_add_grant_int(jwt, "exp", exp);
+    jwt_set_alg(jwt, JWT_ALG_HS256, (unsigned char *)secret, strlen(secret));
+
+    char *encoded = jwt_encode_str(jwt);
+    jwt_free(jwt);
+
+    return encoded;
+}
+
 static bool
 handle_api(struct http_transaction *ta)
 {
@@ -409,6 +429,40 @@ handle_api(struct http_transaction *ta)
             ta->resp_status = HTTP_OK;
             buffer_appends(&ta->resp_body, "{}");
             return send_response(ta);
+        }
+        if (ta->req_method == HTTP_POST)
+        {
+            ta->resp_status = HTTP_OK;
+
+            char *body = bufio_offset2ptr(ta->client->bufio, ta->req_body);
+            json_error_t error;
+            json_t *root = json_loadb(body, ta->req_content_len, 0, &error);
+
+            // Getting username and pass from request/env
+            const char *user = json_string_value(json_object_get(root, "username"));
+            const char *pass = json_string_value(json_object_get(root, "password"));
+            const char *env_user = getenv("USER_NAME");
+            const char *env_pass = getenv("USER_PASS");
+
+            if (!user || !pass || strcmp(user, env_user) != 0 || strcmp(pass, env_pass) != 0)
+            {
+                return send_error(ta, HTTP_PERMISSION_DENIED, "Invalid username or password");
+            }
+            else
+            {
+                // Generate jwt
+                char *token = generate_jwt(user);
+                if (token)
+                {
+                    buffer_appends(&ta->resp_body, "{}");
+                    http_add_header(&ta->resp_headers, "Content-Type", "application/json");
+                    return send_response(ta);
+                }
+                else
+                {
+                    return send_error(ta, HTTP_INTERNAL_ERROR, "Token generation failed");
+                }
+            }
         }
     }
     // video test 2
