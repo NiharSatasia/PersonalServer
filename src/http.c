@@ -455,7 +455,9 @@ handle_api(struct http_transaction *ta)
                 if (token)
                 {
                     buffer_appends(&ta->resp_body, "{}");
-                    http_add_header(&ta->resp_headers, "Content-Type", "application/json");
+                    char fname[PATH_MAX];
+                    snprintf(fname, sizeof fname, "auth_jwt_token=%s; Path=/; HttpOnly; SameSite=Lax; Max-Age=%d", token, token_expiration_time);
+                    http_add_header(&ta->resp_headers, "Set-Cookie", "%s", fname);
                     return send_response(ta);
                 }
                 else
