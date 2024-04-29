@@ -418,6 +418,25 @@ static char *generate_jwt(const char *username)
     return encoded;
 }
 
+// Helper function to validate a jwt
+static bool validate_jwt(const char *token)
+{
+    jwt_t *jwt = NULL;
+    const char *secret = getenv("SECRET");
+    time_t now = time(NULL);
+    int exp = now + token_expiration_time;
+
+    if (exp < now)
+    {
+        jwt_free(jwt);
+        return false;
+    }
+
+    jwt_decode(&jwt, token, (unsigned char *)secret, strlen(secret));
+    jwt_free(jwt);
+    return true;
+}
+
 static bool
 handle_api(struct http_transaction *ta)
 {
@@ -563,7 +582,11 @@ bool http_handle_transaction(struct http_client *self)
     }
     else if (STARTS_WITH(req_path, "/private"))
     {
-        /* not implemented */
+        /* implemented */
+        if (!ta.token || !validate_jwt(ta.token))
+        {
+            send_error(&ta, HTTP_PERMISSION_DENIED, "Invalid token");
+        }
     }
     else
     {
