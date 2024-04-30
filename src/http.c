@@ -464,8 +464,7 @@ handle_api(struct http_transaction *ta)
     {
         if (ta->req_method == HTTP_GET)
         {
-            //check the request cookies for the token, respond with the claims if its valid, or an empty json if not
-
+            //respond with the claims if token is valid, or an empty json if not
             ta->resp_status = HTTP_OK;
             buffer_appends(&ta->resp_body, "{}");
             return send_response(ta);
@@ -604,14 +603,23 @@ bool http_handle_transaction(struct http_client *self)
     else if (STARTS_WITH(req_path, "/private"))
     {
         /* implemented */
+        bool error = false;
         char* token = "";
         if (ta.token) {
             token = bufio_offset2ptr(ta.client->bufio, ta.token);
             if (validate_jwt(token)) {
                 rc = handle_static_asset(&ta, server_root);
             }
+            else {
+                error = true;
+            }
         }
-        send_error(&ta, HTTP_PERMISSION_DENIED, "Invalid token");
+        else {
+            error = true;
+        }
+        if (error) {
+            send_error(&ta, HTTP_PERMISSION_DENIED, "Invalid token");
+        }
         // else //if (!ta.token || !validate_jwt(ta.token))
         // {
         //     send_error(&ta, HTTP_PERMISSION_DENIED, "Invalid token");
