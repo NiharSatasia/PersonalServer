@@ -145,22 +145,25 @@ http_process_headers(struct http_transaction *ta)
                 ta->range.is_set = false;
             }
         }
-        if (!strcasecmp(field_name, "Cookie")) {
-            //need to get a token, maybe a validation time too
+        if (!strcasecmp(field_name, "Cookie"))
+        {
+            // need to get a token, maybe a validation time too
             char *token;
             char *ptr;
             token = strtok_r(field_value, "=; ", &ptr);
-            //use null for field_value in while loop after
-            while (token) {
-                //if token name = auth_jwt_token then get value and set field of http transaction
-                if (!strcmp(token, "auth_jwt_token")) {
-                    //iterate to next value, the token
+            // use null for field_value in while loop after
+            while (token)
+            {
+                // if token name = auth_jwt_token then get value and set field of http transaction
+                if (!strcmp(token, "auth_jwt_token"))
+                {
+                    // iterate to next value, the token
                     token = strtok_r(NULL, "=; ", &ptr);
-                    //store in transaction struct as bufio2ptroffset
+                    // store in transaction struct as bufio2ptroffset
                     ta->token = bufio_ptr2offset(ta->client->bufio, token);
                     break;
                 }
-                //if not continue
+                // if not continue
                 token = strtok_r(NULL, "=; ", &ptr);
             }
         }
@@ -466,13 +469,25 @@ handle_api(struct http_transaction *ta)
         ta->resp_status = HTTP_OK;
         if (ta->req_method == HTTP_GET)
         {
-            //respond with the claims if token is valid, or an empty json if not
-            if (ta->token && validate_jwt(bufio_offset2ptr(ta->client->bufio, ta->token))) {
-
+            // respond with the claims if token is valid, or an empty json if not
+            if (ta->token && validate_jwt(bufio_offset2ptr(ta->client->bufio, ta->token)))
+            {
+                jwt_t *jwt = NULL;
+                const char *secret = getenv("SECRET");
+                char *token_str = bufio_offset2ptr(ta->client->bufio, ta->token);
+                jwt_decode(&jwt, token_str, (unsigned char *)secret, strlen(secret));
+                char *claims_json = jwt_get_grants_json(jwt, NULL);
+                buffer_appends(&ta->resp_body, claims_json);
+                jwt_free(jwt);
             }
-            buffer_appends(&ta->resp_body, "{}");
+            else
+            {
+                buffer_appends(&ta->resp_body, "{}");
+            }
+            http_add_header(&ta->resp_headers, "Content-Type", "application/json");
             return send_response(ta);
         }
+
         if (ta->req_method == HTTP_POST)
         {
             ta->resp_status = HTTP_OK;
@@ -497,10 +512,17 @@ handle_api(struct http_transaction *ta)
                 char *token = generate_jwt(user);
                 if (token)
                 {
-                    buffer_appends(&ta->resp_body, "{}");
+                    jwt_t *jwt = NULL;
+                    const char *secret = getenv("SECRET");
+                    jwt_decode(&jwt, token, (unsigned char *)secret, strlen(secret));
+                    char *claims_json = jwt_get_grants_json(jwt, NULL);
+                    buffer_appends(&ta->resp_body, claims_json);
+                    jwt_free(jwt);
+
                     char fname[PATH_MAX];
                     snprintf(fname, sizeof fname, "auth_jwt_token=%s; Path=/; HttpOnly; SameSite=Lax; Max-Age=%d", token, token_expiration_time);
                     http_add_header(&ta->resp_headers, "Set-Cookie", "%s", fname);
+                    http_add_header(&ta->resp_headers, "Content-Type", "application/json");
                     return send_response(ta);
                 }
                 else
@@ -600,7 +622,8 @@ bool http_handle_transaction(struct http_client *self)
 
     bool rc = false;
     char *req_path = bufio_offset2ptr(ta.client->bufio, ta.req_path);
-    if (!STARTS_WITH(req_path, "/private") && strstr(req_path, "/private")) {
+    if (!STARTS_WITH(req_path, "/private") && strstr(req_path, "/private"))
+    {
         send_error(&ta, HTTP_BAD_REQUEST, "Bad path");
     }
     if (STARTS_WITH(req_path, "/api"))
@@ -609,23 +632,28 @@ bool http_handle_transaction(struct http_client *self)
     }
     else if (STARTS_WITH(req_path, "/private"))
     {
-        //priv:
+        // priv:
         /* implemented */
         bool error = false;
-        char* token = "";
-        if (ta.token) {
+        char *token = "";
+        if (ta.token)
+        {
             token = bufio_offset2ptr(ta.client->bufio, ta.token);
-            if (validate_jwt(token)) {
+            if (validate_jwt(token))
+            {
                 rc = handle_static_asset(&ta, server_root);
             }
-            else {
+            else
+            {
                 error = true;
             }
         }
-        else {
+        else
+        {
             error = true;
         }
-        if (error) {
+        if (error)
+        {
             send_error(&ta, HTTP_PERMISSION_DENIED, "Invalid token");
         }
     }
