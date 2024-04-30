@@ -207,7 +207,12 @@ start_response(struct http_transaction *ta, buffer_t *res)
      * Respond with the highest version the client supports
      * as indicated in the version field of the request.
      */
-    buffer_appends(res, "HTTP/1.0 ");
+    //if (ta->req_version && ta->req_version == HTTP_1_1) {
+    //    buffer_appends(res, "HTTP/1.1 ");
+    //}
+    //else {
+        buffer_appends(res, "HTTP/1.0 ");
+    //}
 
     switch (ta->resp_status)
     {
@@ -362,6 +367,9 @@ handle_static_asset(struct http_transaction *ta, char *basedir)
 
     assert(basedir != NULL || !!!"No base directory. Did you specify -R?");
     char *req_path = bufio_offset2ptr(ta->client->bufio, ta->req_path);
+    if (!strcmp(req_path, "/")) {
+        req_path = "/index.html";
+    }
     // The code below is vulnerable to an attack.  Can you see
     // which?  Fix it to avoid indirect object reference (IDOR) attacks.
     snprintf(fname, sizeof fname, "%s%s", basedir, req_path);
@@ -369,8 +377,18 @@ handle_static_asset(struct http_transaction *ta, char *basedir)
     {
         if (errno == EACCES)
             return send_error(ta, HTTP_PERMISSION_DENIED, "Permission denied.");
-        else
-            return send_not_found(ta);
+        else {
+            if (!strstr(req_path, "/api")) {
+                req_path = "/200.html";
+                snprintf(fname, sizeof fname, "%s%s", basedir, req_path);
+                if (access(fname, R_OK) == -1) {
+                    return send_not_found(ta);
+                }
+            }
+            else {
+                return send_not_found(ta);
+            }
+        }
     }
 
     // Determine file size
@@ -532,6 +550,9 @@ handle_api(struct http_transaction *ta)
             }
         }
     }
+    // else if (strcmp(req_path, "/api/logout") == 0) {
+    //     ta->resp_status = HTTP_OK;
+    // }
     // video test 2
     else if (strcmp(req_path, "/api/video") == 0)
     {
