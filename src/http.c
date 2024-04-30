@@ -451,9 +451,10 @@ static bool validate_jwt(const char *token)
         return false;
     }
 
-    jwt_decode(&jwt, token, (unsigned char *)secret, strlen(secret));
+    int valid = 0;
+    valid = jwt_decode(&jwt, token, (unsigned char *)secret, strlen(secret));
     jwt_free(jwt);
-    return true;
+    return (valid == 0);
 }
 
 static bool
@@ -462,10 +463,13 @@ handle_api(struct http_transaction *ta)
     char *req_path = bufio_offset2ptr(ta->client->bufio, ta->req_path);
     if (strcmp(req_path, "/api/login") == 0)
     {
+        ta->resp_status = HTTP_OK;
         if (ta->req_method == HTTP_GET)
         {
             //respond with the claims if token is valid, or an empty json if not
-            ta->resp_status = HTTP_OK;
+            if (ta->token && validate_jwt(bufio_offset2ptr(ta->client->bufio, ta->token))) {
+
+            }
             buffer_appends(&ta->resp_body, "{}");
             return send_response(ta);
         }
@@ -596,12 +600,16 @@ bool http_handle_transaction(struct http_client *self)
 
     bool rc = false;
     char *req_path = bufio_offset2ptr(ta.client->bufio, ta.req_path);
+    if (!STARTS_WITH(req_path, "/private") && strstr(req_path, "/private")) {
+        send_error(&ta, HTTP_BAD_REQUEST, "Bad path");
+    }
     if (STARTS_WITH(req_path, "/api"))
     {
         rc = handle_api(&ta);
     }
     else if (STARTS_WITH(req_path, "/private"))
     {
+        //priv:
         /* implemented */
         bool error = false;
         char* token = "";
@@ -620,10 +628,6 @@ bool http_handle_transaction(struct http_client *self)
         if (error) {
             send_error(&ta, HTTP_PERMISSION_DENIED, "Invalid token");
         }
-        // else //if (!ta.token || !validate_jwt(ta.token))
-        // {
-        //     send_error(&ta, HTTP_PERMISSION_DENIED, "Invalid token");
-        // }
     }
     else
     {
