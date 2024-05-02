@@ -207,11 +207,11 @@ start_response(struct http_transaction *ta, buffer_t *res)
      * Respond with the highest version the client supports
      * as indicated in the version field of the request.
      */
-    //if (ta->req_version && ta->req_version == HTTP_1_1) {
-    //    buffer_appends(res, "HTTP/1.1 ");
-    //}
-    //else {
-        buffer_appends(res, "HTTP/1.0 ");
+    // if (ta->req_version && ta->req_version == HTTP_1_1) {
+    //     buffer_appends(res, "HTTP/1.1 ");
+    // }
+    // else {
+    buffer_appends(res, "HTTP/1.0 ");
     //}
 
     switch (ta->resp_status)
@@ -359,33 +359,58 @@ guess_mime_type(char *filename)
     return "text/plain";
 }
 
+// Helper function to check if the path has a dot
+static bool has_dot(const char *path)
+{
+    // Go until null character
+    while (*path != '\0')
+    {
+        if (*path == '.')
+        {
+            return true;
+        }
+        path++;
+    }
+    return false;
+}
+
 /* Handle HTTP transaction for static files. */
 static bool
 handle_static_asset(struct http_transaction *ta, char *basedir)
 {
     char fname[PATH_MAX];
-
+    char fname2[PATH_MAX];
     assert(basedir != NULL || !!!"No base directory. Did you specify -R?");
     char *req_path = bufio_offset2ptr(ta->client->bufio, ta->req_path);
-    if (!strcmp(req_path, "/")) {
+    if (!strcmp(req_path, "/"))
+    {
         req_path = "/index.html";
     }
     // The code below is vulnerable to an attack.  Can you see
     // which?  Fix it to avoid indirect object reference (IDOR) attacks.
+    else if (!has_dot(req_path))
+    {
+        snprintf(fname2, sizeof fname2, "%s.html", req_path);
+        req_path = fname2;
+    }
     snprintf(fname, sizeof fname, "%s%s", basedir, req_path);
     if (access(fname, R_OK) == -1)
     {
         if (errno == EACCES)
             return send_error(ta, HTTP_PERMISSION_DENIED, "Permission denied.");
-        else {
-            if (!strstr(req_path, "/api")) {
+        else
+        {
+            if (!strstr(req_path, "/api"))
+            {
                 req_path = "/200.html";
                 snprintf(fname, sizeof fname, "%s%s", basedir, req_path);
-                if (access(fname, R_OK) == -1) {
+                if (access(fname, R_OK) == -1)
+                {
                     return send_not_found(ta);
                 }
             }
-            else {
+            else
+            {
                 return send_not_found(ta);
             }
         }
