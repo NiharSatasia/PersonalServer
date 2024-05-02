@@ -628,6 +628,21 @@ handle_api(struct http_transaction *ta)
             return send_response(ta);
         }
     }
+    else if (strcmp(req_path, "/api/logout") == 0)
+    {
+        if (ta->req_method == HTTP_POST)
+        {
+            ta->resp_status = HTTP_OK;
+            http_add_header(&ta->resp_headers, "Set-Cookie", "auth_jwt_token=deleted; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
+            buffer_appends(&ta->resp_body, "{}");
+            http_add_header(&ta->resp_headers, "Content-Type", "application/json");
+            return send_response(ta);
+        }
+        else
+        {
+            return send_error(ta, HTTP_METHOD_NOT_ALLOWED, "Method has to be POST");
+        }
+    }
 
     return send_error(ta, HTTP_NOT_FOUND, "API not implemented");
 }
